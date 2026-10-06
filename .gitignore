@@ -1,0 +1,14 @@
+# Local credentials/configuration (copy link_config.example.h to create this)
+/components/link_common/include/link_config.h
+
+# Generated firmware, objects, logs and old configuration
+/build/
+sdkconfig.old
+*.bin
+*.elf
+*.obj
+*.o
+
+# Machine-local/editor files
+.DS_Store
+.vscode/

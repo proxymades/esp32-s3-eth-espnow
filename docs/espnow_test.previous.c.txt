@@ -1,0 +1,337 @@
+/* Historical reference only: excluded from CMake; app_main.c is the entry point. */
+#include <stdio.h>
+#include <string.h>
+#include <stdbool.h>
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+#include "esp_wifi.h"
+#include "esp_now.h"
+#include "esp_netif.h"
+#include "esp_event.h"
+#include "esp_mac.h"
+#include "esp_err.h"
+#include "nvs_flash.h"
+
+#include "display.h"
+#include "wifi_link.h"
+
+/* ============================================================
+   WIFI
+   ============================================================ */
+
+#include "link_config.h"
+#define WIFI_SSID LINK_WIFI_SSID
+#define WIFI_PASSWORD LINK_WIFI_PASSWORD
+
+/* ============================================================
+   DEVICE MAC
+   ============================================================ */
+
+static const uint8_t MAC_A[6] = {
+    0x3C, 0x0F, 0x02, 0xD7, 0x86, 0x74};
+
+static const uint8_t MAC_B[6] = {
+    0x3C, 0x0F, 0x02, 0xD8, 0x15, 0x70};
+
+/* ============================================================
+   PACKET
+   ============================================================ */
+
+typedef struct
+{
+    uint32_t seq;
+    char sender;
+    char transport[12];
+} packet_t;
+
+/* ============================================================
+   STATE
+   ============================================================ */
+
+static uint8_t peer_mac[6];
+
+static char device_id = '?';
+
+static volatile uint32_t tx_count = 0;
+static volatile uint32_t rx_count = 0;
+
+/* ============================================================
+   MAC COMPARE
+   ============================================================ */
+
+static bool mac_equal(
+    const uint8_t *a,
+    const uint8_t *b)
+{
+    return memcmp(a, b, 6) == 0;
+}
+
+/* ============================================================
+   ESP-NOW RECEIVE
+   ============================================================ */
+
+static void on_receive(
+    const esp_now_recv_info_t *info,
+    const uint8_t *data,
+    int len)
+{
+    (void)info;
+
+    if (len != sizeof(packet_t))
+    {
+        return;
+    }
+
+    packet_t packet;
+
+    memcpy(
+        &packet,
+        data,
+        sizeof(packet));
+
+    rx_count++;
+
+    printf(
+        "RX  seq=%lu  from=%c  via=%s\n",
+        (unsigned long)packet.seq,
+        packet.sender,
+        packet.transport);
+}
+
+/* ============================================================
+   ESP-NOW SEND
+   ============================================================ */
+
+static void on_send(
+    const uint8_t *mac_addr,
+    esp_now_send_status_t status)
+{
+    (void)mac_addr;
+
+    if (status == ESP_NOW_SEND_SUCCESS)
+    {
+        tx_count++;
+    }
+
+    printf(
+        "TX  %s\n",
+        status == ESP_NOW_SEND_SUCCESS
+            ? "OK"
+            : "FAIL");
+}
+
+/* ============================================================
+   MAIN
+   ============================================================ */
+
+void app_main(void)
+{
+    /* --------------------------------------------------------
+       NVS / network
+       -------------------------------------------------------- */
+
+    ESP_ERROR_CHECK(
+        nvs_flash_init());
+
+    ESP_ERROR_CHECK(
+        esp_netif_init());
+
+    ESP_ERROR_CHECK(
+        esp_event_loop_create_default());
+
+    /* --------------------------------------------------------
+       Wi-Fi driver
+       -------------------------------------------------------- */
+
+    wifi_init_config_t wifi_config =
+        WIFI_INIT_CONFIG_DEFAULT();
+
+    ESP_ERROR_CHECK(
+        esp_wifi_init(&wifi_config));
+
+    ESP_ERROR_CHECK(
+        esp_wifi_set_storage(
+            WIFI_STORAGE_RAM));
+
+    ESP_ERROR_CHECK(
+        esp_wifi_set_mode(
+            WIFI_MODE_STA));
+
+    /* --------------------------------------------------------
+       Определяем плату A / B
+       -------------------------------------------------------- */
+
+    uint8_t local_mac[6];
+
+    ESP_ERROR_CHECK(
+        esp_read_mac(
+            local_mac,
+            ESP_MAC_WIFI_STA));
+
+    if (mac_equal(local_mac, MAC_A))
+    {
+        device_id = 'A';
+
+        memcpy(
+            peer_mac,
+            MAC_B,
+            6);
+    }
+    else if (mac_equal(local_mac, MAC_B))
+    {
+        device_id = 'B';
+
+        memcpy(
+            peer_mac,
+            MAC_A,
+            6);
+    }
+    else
+    {
+        printf(
+            "UNKNOWN DEVICE MAC: "
+            "%02X:%02X:%02X:%02X:%02X:%02X\n",
+            local_mac[0],
+            local_mac[1],
+            local_mac[2],
+            local_mac[3],
+            local_mac[4],
+            local_mac[5]);
+
+        return;
+    }
+
+    printf(
+        "\nDEVICE %c\n"
+        "LOCAL: %02X:%02X:%02X:%02X:%02X:%02X\n"
+        "PEER : %02X:%02X:%02X:%02X:%02X:%02X\n\n",
+
+        device_id,
+
+        local_mac[0],
+        local_mac[1],
+        local_mac[2],
+        local_mac[3],
+        local_mac[4],
+        local_mac[5],
+
+        peer_mac[0],
+        peer_mac[1],
+        peer_mac[2],
+        peer_mac[3],
+        peer_mac[4],
+        peer_mac[5]);
+
+    /* --------------------------------------------------------
+       TFT
+       -------------------------------------------------------- */
+
+    display_init();
+
+    display_update(
+        device_id,
+        tx_count,
+        rx_count);
+
+    /* --------------------------------------------------------
+       Подключаемся к Wi-Fi
+       -------------------------------------------------------- */
+
+    ESP_ERROR_CHECK(
+        wifi_link_init(
+            WIFI_SSID,
+            WIFI_PASSWORD,
+            NULL));
+
+    printf(
+        "Wi-Fi connected\n");
+
+    /* --------------------------------------------------------
+       ESP-NOW
+
+       ВАЖНО:
+       теперь не фиксируем канал 1.
+
+       ESP-NOW работает на том же Wi-Fi канале,
+       который использует роутер.
+       -------------------------------------------------------- */
+
+    ESP_ERROR_CHECK(
+        esp_now_init());
+
+    ESP_ERROR_CHECK(
+        esp_now_register_recv_cb(
+            on_receive));
+
+    ESP_ERROR_CHECK(
+        esp_now_register_send_cb(
+            on_send));
+
+    /* --------------------------------------------------------
+       Peer
+       -------------------------------------------------------- */
+
+    esp_now_peer_info_t peer = {0};
+
+    memcpy(
+        peer.peer_addr,
+        peer_mac,
+        ESP_NOW_ETH_ALEN);
+
+    /*
+     * channel = 0:
+     * использовать текущий Wi-Fi канал.
+     */
+    peer.channel = 0;
+
+    peer.ifidx = WIFI_IF_STA;
+
+    peer.encrypt = false;
+
+    ESP_ERROR_CHECK(
+        esp_now_add_peer(
+            &peer));
+
+    printf(
+        "ESP-NOW ready\n\n");
+
+    /* --------------------------------------------------------
+       Main loop
+       -------------------------------------------------------- */
+
+    uint32_t seq = 0;
+
+    while (1)
+    {
+        packet_t packet = {
+            .seq = seq++,
+            .sender = device_id};
+
+        strcpy(
+            packet.transport,
+            "ESP-NOW");
+
+        esp_err_t result =
+            esp_now_send(
+                peer_mac,
+                (uint8_t *)&packet,
+                sizeof(packet));
+
+        if (result != ESP_OK)
+        {
+            printf(
+                "SEND ERROR: %s\n",
+                esp_err_to_name(result));
+        }
+
+        display_update(
+            device_id,
+            tx_count,
+            rx_count);
+
+        vTaskDelay(
+            pdMS_TO_TICKS(1000));
+    }
+}
