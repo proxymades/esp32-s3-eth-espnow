@@ -24,7 +24,10 @@ espnow_test/
 │   │   └── include/ethernet_link.h
 │   ├── espnow_link/         резервный ESP-NOW unicast
 │   └── transport/           ACK, приоритеты, счётчики, обновление TFT
-├── docs/espnow_test.previous.c.txt
+├── docs/
+│   ├── images/
+│   │   └── esp32-s3-tft-pinout.png
+│   └── espnow_test.previous.c.txt
 └── README.md
 ```
 
@@ -41,6 +44,10 @@ SPI2, MOSI 11, MISO 12, SCLK 13, CS 14, INT 10, RST 9, SPI 20 MHz.
 
 TFT ST7789 240×320 подключён к SPI3. Пины и параметры дисплея заданы
 в `components/display/display.c`.
+
+### Подключение TFT ST7789
+
+![Подключение TFT ST7789 к ESP32-S3-ETH](docs/images/esp32-s3-tft-pinout.png)
 
 ## Локальная конфигурация перед сборкой
 
